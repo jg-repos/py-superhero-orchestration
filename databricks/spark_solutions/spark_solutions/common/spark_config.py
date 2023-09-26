@@ -6,9 +6,9 @@ import spark_solutions.common.service_account_credentials as creds
 import os
 
 # ENV Variables
-SPARK_MASTER=os.getenv('SPARK_MASTER' 'local[*]')
+SPARK_MASTER=os.getenv('SPARK_MASTER', 'local[*]')
 JARS_REPOSITORY=os.getenv('JARS_REPOSITORY', 'https://maven-central.storage-download.googleapis.com/maven2/')
-CLOUD_PROVIDER=os.getenv('CLOUD_PROVIDER', 'AWS')
+CLOUD_PROVIDER=os.getenv('CLOUD_PROVIDER', 'LOCAL')
 
 def _config_spark_session(app_name, warehouse_dir, jars):
     _builder = SparkSession \
@@ -98,5 +98,7 @@ def config_spark_session(app_name, warehouse_dir=None):
         return config_spark_session_gcp(app_name, warehouse_dir)
     elif CLOUD_PROVIDER == 'AZURE':
         return config_spark_session_azure(app_name, warehouse_dir)
+    elif CLOUD_PROVIDER == 'AWS':
+        return config_spark_session_aws(app_name, warehouse_dir)
     
-    return config_spark_session_aws(app_name, warehouse_dir)
+    return _config_spark_session(app_name, warehouse_dir, jars=[])

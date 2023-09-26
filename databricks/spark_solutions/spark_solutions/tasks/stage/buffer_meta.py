@@ -4,18 +4,24 @@ import datetime
 import os
 
 # ENV Variables
+CLOUD_PROVIDER = os.getenv('CLOUD_PROVIDER', 'LOCAL')
 INPUT_DIR = os.getenv('INPUT_DIR', 's3://datasim-superhero-dataflow-standard/standard/buffer_meta')
 OUTPUT_DIR = os.getenv('OUTPUT_DIR', 's3://datasim-superhero-dataflow-stage/stage/buffer_meta')
 
 def _extract_tables(sc, d0=datetime.date.today(), d1=datetime.date.today() - datetime.timedelta(1)):
     delta_paths = [
-        f'{INPUT_DIR}/{d0.year}/{d0.month}/{d0.day}',
-        f'{INPUT_DIR}/{d1.year}/{d1.month}/{d1.day}',
+        f'{INPUT_DIR}/standard/buffer_meta/{d0.year}/{d0.month:02d}/{d0.day:02d}',
+        f'{INPUT_DIR}/standard/buffer_meta/{d1.year}/{d1.month:02d}/{d1.day:02d}',
     ]
-    data = sc.read.parquet(*delta_paths)
+    
+    if CLOUD_PROVIDER != 'LOCAL':
+        data = sc.read.parquet(*delta_paths)
+    else:
+        data = sc.read.parquet(*[d for d in delta_paths if os.path.isdir(d)])
+
     data.createOrReplaceTempView('buffer_meta')
 
-def _transform_load(sc, d=datetime.date.today()):
+def _transform(sc):
     rs = sc.sql("""
         WITH unnamed_partitions AS (
             SELECT date_array[0] year, date_array[1] month, date_array[2] day, *
@@ -38,13 +44,20 @@ def _transform_load(sc, d=datetime.date.today()):
     """)
 
     rs.createOrReplaceTempView('stage__buffer_meta')
-    rs.write \
+
+def _load(sc):
+    df = sc.table('stage__buffer_meta')
+    df.write \
         .format('parquet') \
         .partitionBy('year', 'month', 'day') \
         .mode('overwrite') \
-        .save(OUTPUT_DIR)
+        .save(f'{OUTPUT_DIR}/stage/buffer_meta')
 
 def entrypoint():
     sc = config_spark_session('stage_buffer.meta')
     _extract_tables(sc)
-    _transform_load(sc)
+    _transform(sc)
+    _load(sc)
+
+if __name__ == '__main__':
+    entrypoint()

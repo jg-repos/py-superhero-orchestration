@@ -36,7 +36,7 @@ setup(
     extras_require={"local": LOCAL_REQUIREMENTS, "test": TEST_REQUIREMENTS},
     entry_points = {
         "console_scripts": [
-            "stage_buffer_meta = spark_solutions.tasks.clean.stage_buffer_meta:entrypoint"
+            "stage_buffer_meta = spark_solutions.tasks.clean.stage_buffer_meta:entrypoint",
             "stage_etl_meta = spark_solutions.tasks.clean.stage_etl_meta:entrypoint",
             "stage_log_meta = spark_solutions.tasks.clean.stage_log_meta:entrypoiont",
             "stage_lib_server_game = spark_solutions.tasks.clean.stage_lib_server_game:entrypoint",

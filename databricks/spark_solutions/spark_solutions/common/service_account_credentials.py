@@ -3,7 +3,7 @@ from spark_solutions.common import get_dbutils
 import os
 
 #ENV Variables
-CLOUD_PROVIDER = os.getenv('CLOUD_PROVIDER', 'AWS')
+CLOUD_PROVIDER = os.getenv('CLOUD_PROVIDER', 'LOCAL')
 SERVICE_ACCOUNT_KEY_NAME = os.getenv('SERVICE_ACCOUNT_KEY_NAME', 'databricks-sa-key-name')
 SERVICE_ACCOUNT_KEY_SECRET = os.getenv('SERVICE_ACCOUNT_KEY_SECRET', 'databricks-sa-key-secret')
 
@@ -100,8 +100,10 @@ def get_credentials(spark):
             return get_credentials_gcp()
         elif CLOUD_PROVIDER == 'AZURE':
             return get_credentials_azure()
+        elif CLOUD_PROVIDER == 'AWS':
+            return get_credentials_aws()
         
-        return get_credentials_aws()
-        
+        return None
+    
     return dbutils.secrets.get(scope='gcp', key=SERVICE_ACCOUNT_KEY_NAME), \
         dbutils.secrets.get(scope='gcp', key=SERVICE_ACCOUNT_KEY_SECRET)

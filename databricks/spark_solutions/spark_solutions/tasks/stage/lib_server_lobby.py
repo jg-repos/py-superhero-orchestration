@@ -4,18 +4,24 @@ import datetime
 import os
 
 # ENV Variables
+CLOUD_PROVIDER = os.getenv('CLOUD_PROVIDER', 'LOCAL')
 INPUT_DIR = os.getenv('INPUT_DIR', 's3://datasim-superhero-dataflow-standard/standard/lib.server.lobby')
 OUTPUT_DIR = os.getenv('OUTPUT_DIR', 's3://datasim-superhero-dataflow-stage/stage/lib.server.lobby')
 
 def _extract_tables(sc, d0=datetime.date.today(), d1=datetime.date.today() - datetime.timedelta(1)):
     delta_paths = [
-        f'{INPUT_DIR}/{d0.year}/{d0.month}/{d0.day}',
-        f'{INPUT_DIR}/{d1.year}/{d1.month}/{d1.day}',
+        f'{INPUT_DIR}/standard/lib_server_lobby/{d0.year}/{d0.month:02d}/{d0.day:02d}',
+        f'{INPUT_DIR}/standard/lib_server_lobby/{d1.year}/{d1.month:02d}/{d1.day:02d}',
     ]
-    data = sc.read.parquet(*delta_paths)
+
+    if CLOUD_PROVIDER != 'LOCAL':
+        data = sc.read.parquet(*delta_paths)
+    else:
+        data = sc.read.parquet(*[d for d in delta_paths if os.path.isdir(d)])
+
     data.createOrReplaceTempView('lib_server_lobby')
 
-def _transform_load(sc, d=datetime.date.today()):
+def _transform(sc):
     rs = sc.sql("""
         WITH unnamed_partitions AS (
             SELECT date_array[0] year, date_array[1] month, date_array[2] day, *
@@ -31,18 +37,25 @@ def _transform_load(sc, d=datetime.date.today()):
                MIN(month) month,
                MIN(day) day
         FROM unnamed_partitions
-        GROUP BY etl_id, msg_id, game_token, user_token
+        GROUP BY etl_id, msg_id, game_token, user_token,
                  superhero_id, superhero_attack, superhero_health
     """)
 
     rs.createOrReplaceTempView('stage__lib_server_lobby')
-    rs.write \
+
+def _load(sc):
+    df = sc.table('stage__lib_server_lobby')
+    df.write \
         .format('parquet') \
         .partitionBy('year', 'month', 'day') \
         .mode('overwrite') \
-        .save(OUTPUT_DIR)
+        .save(f'{OUTPUT_DIR}/stage/lib_server_lobby')
 
 def entrypoint():
     sc = config_spark_session('stage_lib.servery.lobby')
     _extract_tables(sc)
-    _transform_load(sc)
+    _transform(sc)
+    _load(sc)
+
+if __name__ == '__main__':
+    entrypoint()
