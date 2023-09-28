@@ -7,7 +7,6 @@ from spark_solutions.tasks.stage import log_meta
 import pytest
 
 @pytest.mark.stage
-@pytest.mark.local
 @pytest.mark.table_buffer_meta
 @pytest.mark.userFixtures('spark')
 def test_stage_buffer_meta(spark):
@@ -18,7 +17,6 @@ def test_stage_buffer_meta(spark):
     assert df.count() > 0
 
 @pytest.mark.stage
-@pytest.mark.local
 @pytest.mark.table_etl_meta
 @pytest.mark.userFixtures('spark')
 def test_stage_etl_meta(spark):
@@ -29,7 +27,6 @@ def test_stage_etl_meta(spark):
     assert df.count() > 0
 
 @pytest.mark.stage
-@pytest.mark.local
 @pytest.mark.table_log_meta
 @pytest.mark.userFixtures('spark')
 def test_stage_log_meta(spark):
@@ -40,7 +37,6 @@ def test_stage_log_meta(spark):
     assert df.count() > 0
 
 @pytest.mark.stage
-@pytest.mark.local
 @pytest.mark.table_lib_server_game
 @pytest.mark.userFixtures('spark')
 def test_stage_lib_server_game(spark):
@@ -51,7 +47,6 @@ def test_stage_lib_server_game(spark):
     assert df.count() > 0
 
 @pytest.mark.stage
-@pytest.mark.local
 @pytest.mark.table_lib_server_lobby
 @pytest.mark.userFixtures('spark')
 def test_stage_lib_server_lobby(spark):
