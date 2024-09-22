@@ -1,27 +1,31 @@
-from spark_solutions.common.spark_config import config_spark_session
+from spark_solutions.common.spark_config import SparkConfig
+from spark_solutions.common.spark_misc import extract_tables
+from spark_solutions.loggers.log4j import inject_logging
 
-import datetime
+import logging
 import os
 
+logger = logging.getLogger(f'py4j.{__name__}')
+
 # ENV Variables
-CLOUD_PROVIDER = os.getenv('CLOUD_PROVIDER', 'LOCAL')
-INPUT_DIR = os.getenv('INPUT_DIR', 's3://datasim-superhero-dataflow-standard/standard/buffer_meta')
-OUTPUT_DIR = os.getenv('OUTPUT_DIR', 's3://datasim-superhero-dataflow-stage/stage/buffer_meta')
+CLOUD_PROVIDER=os.getenv('CLOUD_PROVIDER', 'LOCAL')
+INPUT_DIR = os.getenv('STANDARD_DIR')
+OUTPUT_DIR = os.getenv('STAGE_DIR')
 
-def _extract_tables(sc, d0=datetime.date.today(), d1=datetime.date.today() - datetime.timedelta(1)):
-    delta_paths = [
-        f'{INPUT_DIR}/standard/buffer_meta/{d0.year}/{d0.month:02d}/{d0.day:02d}',
-        f'{INPUT_DIR}/standard/buffer_meta/{d1.year}/{d1.month:02d}/{d1.day:02d}',
-    ]
-    
-    if CLOUD_PROVIDER != 'LOCAL':
-        data = sc.read.parquet(*delta_paths)
-    else:
-        data = sc.read.parquet(*[d for d in delta_paths if os.path.isdir(d)])
-
-    data.createOrReplaceTempView('buffer_meta')
+assert(not INPUT_DIR is None and INPUT_DIR != '')
+assert(not OUTPUT_DIR is None and OUTPUT_DIR != '')
 
 def _transform(sc):
+    """
+    Transforms data to stage the Buffer Meta table.
+
+    This function performs the transformation stage of the ETL pipeline by staging the Buffer Meta table.
+    It calculates aggregates and extracts partition information from the input data.
+
+    Parameters:
+    - sc (SparkContext): The SparkContext object.
+    """
+    logger.info(f'ETL Pipeline | Transform | Staging Buffer Meta Table')
     rs = sc.sql("""
         WITH unnamed_partitions AS (
             SELECT date_array[0] year, date_array[1] month, date_array[2] day, *
@@ -45,17 +49,43 @@ def _transform(sc):
 
     rs.createOrReplaceTempView('stage__buffer_meta')
 
-def _load(sc):
+def _load(sc, blob_prefix='standard' if CLOUD_PROVIDER!='AZURE' else ''):
+    """
+    Loads Buffer Meta logs to Delta tables in the specified output directory based on the cloud provider.
+
+    This function performs the load stage of the ETL pipeline by loading Buffer Meta logs into Delta tables
+    located in the specified output directory. The loading process varies based on the cloud provider.
+
+    Parameters:
+    - sc (SparkContext): The SparkContext object.
+    - blob_prefix (str): The prefix to be appended to the output directory paths (default: 'standard' if CLOUD_PROVIDER is not 'AZURE', else '').
+    """
+    logger.info(f'ETL Pipeline | Load | Loading Buffer Meta Logs to Delta Tables in {CLOUD_PROVIDER}')
     df = sc.table('stage__buffer_meta')
     df.write \
-        .format('parquet') \
+        .format('delta') \
         .partitionBy('year', 'month', 'day') \
         .mode('overwrite') \
-        .save(f'{OUTPUT_DIR}/stage/buffer_meta')
+        .save(os.path.join(OUTPUT_DIR, blob_prefix, 'buffer_meta'))
 
-def entrypoint():
-    sc = config_spark_session('stage_buffer.meta')
-    _extract_tables(sc)
+def entrypoint(blob_prefix='standard' if CLOUD_PROVIDER!='AZURE' else ''):
+    """
+    Entry point for the ETL pipeline to process Buffer Meta logs.
+
+    This function serves as the entry point for the ETL (Extract, Transform, Load) pipeline
+    to process Buffer Meta logs. It initializes a SparkContext using the configured SparkConfig,
+    injects logging for Py4J communication, performs extraction, transformation, and loading stages,
+    and manages the overall execution flow.
+
+    Parameters:
+    - blob_prefix (str): The prefix to be appended to the input directory paths (default: 'standard' if CLOUD_PROVIDER is not 'AZURE', else '').
+    """
+    sc = SparkConfig(app_name='stage_buffer.meta') \
+        .get_sparkContext()
+    
+    inject_logging(sc)
+    
+    extract_tables(sc, os.path.join(INPUT_DIR, blob_prefix, 'buffer_meta'))
     _transform(sc)
     _load(sc)
 

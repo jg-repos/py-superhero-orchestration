@@ -8,7 +8,15 @@ Please follow the `entry_points` documentation for more details on how to config
 from setuptools import find_packages, setup
 from spark_solutions import __version__
 
-PACKAGE_REQUIREMENTS = ["pyyaml"]
+PACKAGE_REQUIREMENTS = [
+    "pyyaml",
+    "pytest",
+    "pytest-cov",
+    "adlfs==2022.11.2",
+    "fsspec==2022.11.0",
+    "gcsfs==2022.11.0",
+    "s3fs==2022.11.0",
+]
 
 # packages for local development and unit testing
 # please note that these packages are already available in DBR, there is no need to install them on DBR.
@@ -18,6 +26,8 @@ LOCAL_REQUIREMENTS = [
     "scikit-learn",
     "pandas",
     "mlflow",
+    "azure-keyvault-secrets==4.8.0",
+    "azure-identity==1.15.0"
 ]
 
 TEST_REQUIREMENTS = [
@@ -25,7 +35,8 @@ TEST_REQUIREMENTS = [
     "pytest",
     "coverage[toml]",
     "pytest-cov",
-    "dbx>=0.8"
+    "dbx>=0.8",
+    "google-cloud-secret-manager==2.16.4",
 ]
 
 setup(
@@ -36,11 +47,13 @@ setup(
     extras_require={"local": LOCAL_REQUIREMENTS, "test": TEST_REQUIREMENTS},
     entry_points = {
         "console_scripts": [
-            "stage_buffer_meta = spark_solutions.tasks.clean.stage_buffer_meta:entrypoint",
-            "stage_etl_meta = spark_solutions.tasks.clean.stage_etl_meta:entrypoint",
-            "stage_log_meta = spark_solutions.tasks.clean.stage_log_meta:entrypoiont",
-            "stage_lib_server_game = spark_solutions.tasks.clean.stage_lib_server_game:entrypoint",
-            "stage_lib_server_lobby = spark_solutions.tasks.clean.stage_lib_server_lobby:entrypoint",
+            "stage_buffer_meta = spark_solutions.tasks.stage.buffer_meta:entrypoint",
+            "stage_etl_meta = spark_solutions.tasks.stage.etl_meta:entrypoint",
+            "stage_log_meta = spark_solutions.tasks.stage.log_meta:entrypoint",
+            "stage_lib_server_game = spark_solutions.tasks.stage.lib_server_game:entrypoint",
+            "stage_lib_server_lobby = spark_solutions.tasks.stage.lib_server_lobby:entrypoint",
+            "output_game_metrics = spark_solutions.tasks.output.game_metrics:entrypoint",
+            "output_message_flow = spark_solutions.tasks.output.message_flow:entrypoint"
     ]},
     version=__version__,
     description="Data Simulator Spark ETL Examples",

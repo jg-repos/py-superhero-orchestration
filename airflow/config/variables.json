@@ -1,0 +1,7 @@
+{
+    "KAFKA_HOST": "localhost",
+    "KAFKA_PORT": 9093,
+    "KAFKA_SENSOR_MODE": "ALL",
+    "KAFKA_SENSOR_MARK": "MIN",
+    "KAFKA_SENSOR_THRESHOLD": 1000
+}

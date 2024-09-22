@@ -1,0 +1,20 @@
+{
+    "kafka_default": {
+        "conn_type": "kafka",
+        "host": "localhost",
+        "login": null,
+        "password": null,
+        "schema": null,
+        "port": "9093",
+        "extra": null
+    },
+    "redis_local": {
+        "conn_type": "redis",
+        "host": "localhost",
+        "login": null,
+        "password": null,
+        "schema": "redis",
+        "port": "6379",
+        "extra": null
+    }
+}

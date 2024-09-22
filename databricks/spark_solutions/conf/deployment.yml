@@ -1,0 +1,448 @@
+# Custom section is used to store configurations that might be repetative.
+# Databricks Cluster Policy Attributes: 
+#  - https://docs.databricks.com/en/administration-guide/clusters/policies.html#cluster-policy-attribute-paths
+#
+# Please read YAML documentation for details on how to use substitutions and anchors.
+custom:
+  terraform-cluster: &terraform-cluster
+    existing_cluster_id: "{{ env['DATABRICKS_CLUSTER_ID'] }}"
+
+  aws-cluster-props: &aws-cluster-props
+    label: "dbx-qa-aws"
+    spark_version: "11.3.x-cpu-ml-scala2.12"
+    spark_conf:
+      "spark.hadoop.fs.s3a.access.key": "{% raw %}{{secrets/AWS/databricks-sa-key-name}}{% endraw %}"
+      "spark.hadoop.fs.s3a.secret.key": "{% raw %}{{secrets/AZURE/databricks-sa-key-secret}}{% endraw %}"
+      "spark.hadoop.fs.s3a.aws.credentials.provider": "org.apache.hadoop.fs.s3a.BasicAWSCredentialsProvider"
+      "spark.hadoop.fs.s3a.endpoint": "s3.amazonaws.com"
+      "spark.hadoop.fs.s3a.server-side-encryption-algorithm": "SSE-KMS"
+    spark_env_vars:
+      "CLOUD_PROVIDER": "AWS"
+      "RAW_DIR": "{{ env['RAW_DIR'] }}"
+      "STANDARD_DIR": "{{ env['STANDARD_DIR'] }}"
+      "STAGE_DIR": "{{ env['STAGE_DIR'] }}"
+      "OUTPUT_DIR": "{{ env['OUTPUT_DIR'] }}"
+   
+  aws-static-cluster: &aws-static-cluster
+    new_cluster:
+      <<: *aws-cluster-props
+      num_workers: 1
+      node_type_id: "Standard_DS3_v2"
+   
+  azure-cluster-props: &azure-cluster-props
+    label: "dbx-qa-azure"
+    spark_version: "11.3.x-cpu-ml-scala2.12"
+    spark_conf:
+      "fs.azure.account.auth.type": "OAuth"
+      "fs.azure.account.oauth.provider.type": "org.apache.hadoop.fs.azurebfs.oauth2.ClientCredsTokenProvider"
+      "fs.azure.account.oauth2.client.endpoint": "https://login.microsoftonline.com/{{ env['AZURE_STORAGE_TENANT_ID'] }}/oauth2/token"
+      "s.azure.account.oauth2.client.id": "{% raw %}{{secrets/AZURE/databricks-sa-key-name}}{% endraw %}"
+      "fs.azure.account.oauth2.client.secret": "{% raw %}{{secrets/AZURE/databricks-sa-key-secret}}{% endraw %}"
+      "spark.databricks.driver.strace.enabled": "true"
+    spark_env_vars:
+      "CLOUD_PROVIDER": "AZURE"
+      "RAW_DIR": "{{ env['RAW_DIR'] }}"
+      "STANDARD_DIR": "{{ env['STANDARD_DIR'] }}"
+      "STAGE_DIR": "{{ env['STAGE_DIR'] }}"
+      "OUTPUT_DIR": "{{ env['OUTPUT_DIR'] }}"
+
+  azure-static-cluster: &azure-static-cluster
+    new_cluster:
+      <<: *azure-cluster-props
+      num_workers: 1
+      node_type_id: "Standard_DS3_v2"
+
+  
+  gcp-cluster-props: &gcp-cluster-props
+    label: "dbx-qa-gcp"
+    spark_version: "11.3.x-cpu-ml-scala2.12"
+    spark_conf:
+      "fs.gs.auth.type": "USER_CREDENTIALS"
+      "fs.gs.impl": "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFileSystem"
+      "fs.AbstractFileSystem.gs.impl": "com.google.cloud.hadoop.fs.gcs.GoogleHadoopFS"
+      "fs.gs.project.id": "{{ env['GOOGLE_PROJECT_ID'] }}"
+      "google.cloud.auth.service.account.enable": "true"
+      "google.cloud.auth.service.account.email": "{% raw %}{{secrets/GCP/databricks-sa-email}}{% endraw %}"
+      "google.cloud.auth.service.account.private.key.id": "{% raw %}{{secrets/GCP/databricks-sa-key-name}}{% endraw %}"
+      "google.cloud.auth.service.account.private.key": "{% raw %}{{secrets/AZURE/databricks-sa-key-secret}}{% endraw %}"
+    spark_env_vars:
+      "CLOUD_PROVIDER": "GCP"
+      "RAW_DIR": "{{ env['RAW_DIR'] }}"
+      "STANDARD_DIR": "{{ env['STANDARD_DIR'] }}"
+      "STAGE_DIR": "{{ env['STAGE_DIR'] }}"
+      "OUTPUT_DIR": "{{ env['OUTPUT_DIR'] }}"
+   
+  gcp-static-cluster: &gcp-static-cluster
+    new_cluster:
+      <<: *gcp-cluster-props
+      num_workers: 1
+      node_type_id: "n2-highmem-2"
+      autoscale.max_workers: 1
+      gcp_attributes:
+        gcp_availability: "PREEMPTIBLE_GCP"
+        local_ssd_count: 1
+      
+
+environments:
+  # Databricks AWS
+  aws:
+    workflows:
+      #######################################################################################
+      #   dbx QA Integration Stage Test Workflow                                            #
+      #######################################################################################
+      - name: "dbx_aws_qa_stage_integration_test_workflow"
+        tasks:
+          - task_key: "stage_integration_test"
+            <<: *aws-static-cluster
+            spark_python_task:
+                python_file: "file://spark_solutions/tests/entrypoint.py"
+                # this call supports all standard pytest arguments
+                parameters: ["file:fuse://spark_solutions/tests/integration", "--cov=spark_solutions"]
+      
+      #######################################################################################
+      # Spark Solutions | Stage | Buffer Meta Workflow                                      #
+      #######################################################################################
+      - name: "dbx_aws_qa_stage_buffer_meta_workflow"
+        job_clusters:
+          - job_cluster_key: "dbx-qa-cluster-aws"
+            <<: *aws-static-cluster
+        tasks:
+          - task_key: "stage_buffer_meta_spark_etl"
+            job_cluster_key: "dbx-qa-cluster-aws"
+            python_wheel_task:
+              package_name: "spark_solutions"
+              entry_point: "stage_buffer_meta"
+          - task_key: "stage_buffer_meta_dlt_pipe"
+            job_cluster_key: "dbx-qa-cluster-aws"
+            git_source:
+              git_url: https://github.com/rethinkr-hub/py-superhero-orchestration.git
+              git_provider: "GitHub"
+              git_branch: "master"
+            deployment_config:
+              no_package: true # we omit using package since code will be shipped directly from the Repo
+            depends_on:
+              - task_key: "stage_buffer_meta_spark_etl"
+            notebook_task:
+              notebook_path: "databricks/spark_solutions/notebooks/stage/buffer_meta.py"
+
+      #######################################################################################
+      # Spark Solutions | Stage | ETL Meta Workflow                                         #
+      #######################################################################################
+      - name: "dbx_aws_qa_stage_etl_meta_workflow"
+        job_clusters:
+          - job_cluster_key: "dbx-qa-cluster-aws"
+            <<: *aws-static-cluster
+        tasks:
+          - task_key: "stage_etl_meta_spark_etl"
+            job_cluster_key: "dbx-qa-cluster-aws"
+            python_wheel_task:
+              package_name: "spark_solutions"
+              entry_point: "stage_etl_meta"
+          - task_key: "stage_etl_meta_dlt_pipe"
+            job_cluster_key: "dbx-qa-cluster-aws"
+            git_source:
+              git_url: https://github.com/rethinkr-hub/py-superhero-orchestration.git
+              git_provider: "GitHub"
+              git_branch: "master"
+            deployment_config:
+              no_package: true # we omit using package since code will be shipped directly from the Repo
+            depends_on:
+              - task_key: "stage_etl_meta_spark_etl"
+            notebook_task:
+              notebook_path: "databricks/spark_solutions/notebooks/stage/etl_meta.py"
+      
+      #######################################################################################
+      # Spark Solutions | Stage | Log Meta Workflow                                         #
+      #######################################################################################
+      - name: "dbx_aws_qa_stage_log_meta_workflow"
+        job_clusters:
+          - job_cluster_key: "dbx-qa-cluster-aws"
+            <<: *aws-static-cluster
+        tasks:
+          - task_key: "stage_log_meta_spark_etl"
+            job_cluster_key: "dbx-qa-cluster-aws"
+            python_wheel_task:
+              package_name: "spark_solutions"
+              entry_point: "stage_log_meta"
+          - task_key: "stage_log_meta_dlt_pipe"
+            job_cluster_key: "dbx-qa-cluster-aws"
+            git_source:
+              git_url: https://github.com/rethinkr-hub/py-superhero-orchestration.git
+              git_provider: "GitHub"
+              git_branch: "master"
+            deployment_config:
+              no_package: true # we omit using package since code will be shipped directly from the Repo
+            depends_on:
+              - task_key: "stage_log_meta_spark_etl"
+            notebook_task:
+              notebook_path: "databricks/spark_solutions/notebooks/stage/log_meta.py"
+      
+      #######################################################################################
+      # Spark Solutions | Stage | Lib Server Game Workflow                                  #
+      #######################################################################################
+      - name: "dbx_aws_qa_stage_lib_server_game_workflow"
+        job_clusters:
+          - job_cluster_key: "dbx-qa-cluster-aws"
+            <<: *aws-static-cluster
+        tasks:
+          - task_key: "stage_lib_server_game_spark_etl"
+            job_cluster_key: "dbx-qa-cluster-aws"
+            python_wheel_task:
+              package_name: "spark_solutions"
+              entry_point: "stage_lib_server_game"
+          - task_key: "stage_lib_server_game_dlt_pipe"
+            job_cluster_key: "dbx-qa-cluster-aws"
+            git_source:
+              git_url: https://github.com/rethinkr-hub/py-superhero-orchestration.git
+              git_provider: "GitHub"
+              git_branch: "master"
+            deployment_config:
+              no_package: true # we omit using package since code will be shipped directly from the Repo
+            depends_on:
+              - task_key: "stage_lib_server_game_spark_etl"
+            notebook_task:
+              notebook_path: "databricks/spark_solutions/notebooks/stage/lib_server_game.py"
+      
+      #######################################################################################
+      # Spark Solutions | Stage | Lib Server lobby Workflow                                 #
+      #######################################################################################
+      - name: "dbx_aws_qa_stage_lib_server_lobby_workflow"
+        job_clusters:
+          - job_cluster_key: "dbx-qa-cluster-aws"
+            <<: *aws-static-cluster
+        tasks:
+          - task_key: "stage_lib_server_lobby_spark_etl"
+            job_cluster_key: "dbx-qa-cluster-aws"
+            python_wheel_task:
+              package_name: "spark_solutions"
+              entry_point: "stage_lib_server_lobby"
+          - task_key: "stage_lib_server_lobby_dlt_pipe"
+            job_cluster_key: "dbx-qa-cluster-aws"
+            git_source:
+              git_url: https://github.com/rethinkr-hub/py-superhero-orchestration.git
+              git_provider: "GitHub"
+              git_branch: "master"
+            deployment_config:
+              no_package: true # we omit using package since code will be shipped directly from the Repo
+            depends_on:
+              - task_key: "stage_lib_server_lobby_spark_etl"
+            notebook_task:
+              notebook_path: "databricks/spark_solutions/notebooks/stage/lib_server_lobby.py"
+
+  # Databricks Azure
+  azure:
+    workflows:
+      #######################################################################################
+      #   dbx QA Integration Test Workflow                                                  #
+      #######################################################################################
+      - name: "dbx_azure_qa_integration_test_workflow"
+        tasks:
+          - task_key: "stage_integration_test"
+            <<: *terraform-cluster
+            spark_python_task:
+                python_file: "file://spark_solutions/tests/entrypoint.py"
+                # this call supports all standard pytest arguments
+                parameters: ["file:fuse://spark_solutions/tests/integration", "file:fuse://spark_solutions/tests/conftest.py", "--cov=spark_solutions"]
+      
+      #######################################################################################
+      # Spark Solutions | Stage | Workflow                                                  #
+      #######################################################################################
+      - name: "dbx_azure_qa_stage_workflow"
+        #job_clusters:
+        #  <<: *terraform-cluster
+        tasks:
+          - task_key: "stage_buffer_meta_spark_etl"
+            <<: *terraform-cluster
+            #job_cluster_key: "dbx-qa-cluster-azure"
+            python_wheel_task:
+              package_name: "spark_solutions"
+              entry_point: "stage_buffer_meta"
+          - task_key: "stage_etl_meta_spark_etl"
+            <<: *terraform-cluster
+            #job_cluster_key: "dbx-qa-cluster-azure"
+            python_wheel_task:
+              package_name: "spark_solutions"
+              entry_point: "stage_etl_meta"
+          - task_key: "stage_log_meta_spark_etl"
+            <<: *terraform-cluster
+            #job_cluster_key: "dbx-qa-cluster-azure"
+            python_wheel_task:
+              package_name: "spark_solutions"
+              entry_point: "stage_log_meta"
+          - task_key: "stage_lib_server_game_spark_etl"
+            <<: *terraform-cluster
+            #job_cluster_key: "dbx-qa-cluster-azure"
+            python_wheel_task:
+              package_name: "spark_solutions"
+              entry_point: "stage_lib_server_game"
+          - task_key: "stage_lib_server_lobby_spark_etl"
+            <<: *terraform-cluster
+            #job_cluster_key: "dbx-qa-cluster-azure"
+            python_wheel_task:
+              package_name: "spark_solutions"
+              entry_point: "stage_lib_server_lobby"
+      
+      #######################################################################################
+      # Spark Solutions | Output | Workflow                                                 #
+      #######################################################################################
+      - name: "dbx_azure_qa_output_workflow"
+        #job_clusters:
+        #  <<: *terraform-cluster
+        tasks:
+          - task_key: "output_game_metrics_spark_etl"
+            <<: *terraform-cluster
+            #job_cluster_key: "dbx-qa-cluster-azure"
+            python_wheel_task:
+              package_name: "spark_solutions"
+              entry_point: "output_game_metrics"
+          - task_key: "output_message_flow_spark_etl"
+            <<: *terraform-cluster
+            #job_cluster_key: "dbx-qa-cluster-azure"
+            python_wheel_task:
+              package_name: "spark_solutions"
+              entry_point: "output_message_flow"
+
+  # Databricks GCP
+  gcp:
+    workflows:
+      #######################################################################################
+      #   dbx QA Integration Stage Test Workflow                                            #
+      #######################################################################################
+      - name: "dbx_gcp_qa_stage_integration_test_workflow"
+        tasks:
+          - task_key: "stage_integration_test"
+            <<: *gcp-static-cluster
+            spark_python_task:
+                python_file: "file://spark_solutions/tests/entrypoint.py"
+                # this call supports all standard pytest arguments
+                parameters: ["file:fuse://spark_solutions/tests/integration", "file:fuse://spark_solutions/tests/conftest.py", "--cov=spark_solutions"]
+      
+      #######################################################################################
+      # Spark Solutions | Stage | Buffer Meta Workflow                                      #
+      #######################################################################################
+      - name: "dbx_gcp_qa_stage_buffer_meta_workflow"
+        job_clusters:
+          - job_cluster_key: "dbx-qa-cluster-gcp"
+            <<: *gcp-static-cluster
+        tasks:
+          - task_key: "stage_buffer_meta_spark_etl"
+            job_cluster_key: "dbx-qa-cluster-gcp"
+            python_wheel_task:
+              package_name: "spark_solutions"
+              entry_point: "stage_buffer_meta"
+          - task_key: "stage_buffer_meta_dlt_pipe"
+            job_cluster_key: "dbx-qa-cluster-gcp"
+            git_source:
+              git_url: https://github.com/rethinkr-hub/py-superhero-orchestration.git
+              git_provider: "GitHub"
+              git_branch: "master"
+            deployment_config:
+              no_package: true # we omit using package since code will be shipped directly from the Repo
+            depends_on:
+              - task_key: "stage_buffer_meta_spark_etl"
+            notebook_task:
+              notebook_path: "databricks/spark_solutions/notebooks/stage/buffer_meta.py"
+
+      #######################################################################################
+      # Spark Solutions | Stage | ETL Meta Workflow                                         #
+      #######################################################################################
+      - name: "dbx_gcp_qa_stage_etl_meta_workflow"
+        job_clusters:
+          - job_cluster_key: "dbx-qa-cluster-gcp"
+            <<: *gcp-static-cluster
+        tasks:
+          - task_key: "stage_etl_meta_spark_etl"
+            job_cluster_key: "dbx-qa-cluster-gcp"
+            python_wheel_task:
+              package_name: "spark_solutions"
+              entry_point: "stage_etl_meta"
+          - task_key: "stage_etl_meta_dlt_pipe"
+            job_cluster_key: "dbx-qa-cluster-gcp"
+            git_source:
+              git_url: https://github.com/rethinkr-hub/py-superhero-orchestration.git
+              git_provider: "GitHub"
+              git_branch: "master"
+            deployment_config:
+              no_package: true # we omit using package since code will be shipped directly from the Repo
+            depends_on:
+              - task_key: "stage_etl_meta_spark_etl"
+            notebook_task:
+              notebook_path: "databricks/spark_solutions/notebooks/stage/etl_meta.py"
+      
+      #######################################################################################
+      # Spark Solutions | Stage | Log Meta Workflow                                         #
+      #######################################################################################
+      - name: "dbx_gcp_qa_stage_log_meta_workflow"
+        job_clusters:
+          - job_cluster_key: "dbx-qa-cluster-gcp"
+            <<: *gcp-static-cluster
+        tasks:
+          - task_key: "stage_log_meta_spark_etl"
+            job_cluster_key: "dbx-qa-cluster-gcp"
+            python_wheel_task:
+              package_name: "spark_solutions"
+              entry_point: "stage_log_meta"
+          - task_key: "stage_log_meta_dlt_pipe"
+            job_cluster_key: "dbx-qa-cluster-gcp"
+            git_source:
+              git_url: https://github.com/rethinkr-hub/py-superhero-orchestration.git
+              git_provider: "GitHub"
+              git_branch: "master"
+            deployment_config:
+              no_package: true # we omit using package since code will be shipped directly from the Repo
+            depends_on:
+              - task_key: "stage_log_meta_spark_etl"
+            notebook_task:
+              notebook_path: "databricks/spark_solutions/notebooks/stage/log_meta.py"
+      
+      #######################################################################################
+      # Spark Solutions | Stage | Lib Server Game Workflow                                  #
+      #######################################################################################
+      - name: "dbx_gcp_qa_stage_lib_server_game_workflow"
+        job_clusters:
+          - job_cluster_key: "dbx-qa-cluster-gcp"
+            <<: *gcp-static-cluster
+        tasks:
+          - task_key: "stage_lib_server_game_spark_etl"
+            job_cluster_key: "dbx-qa-cluster-gcp"
+            python_wheel_task:
+              package_name: "spark_solutions"
+              entry_point: "stage_lib_server_game"
+          - task_key: "stage_lib_server_game_dlt_pipe"
+            job_cluster_key: "dbx-qa-cluster-gcp"
+            git_source:
+              git_url: https://github.com/rethinkr-hub/py-superhero-orchestration.git
+              git_provider: "GitHub"
+              git_branch: "master"
+            deployment_config:
+              no_package: true # we omit using package since code will be shipped directly from the Repo
+            depends_on:
+              - task_key: "stage_lib_server_game_spark_etl"
+            notebook_task:
+              notebook_path: "databricks/spark_solutions/notebooks/stage/lib_server_game.py"
+      
+      #######################################################################################
+      # Spark Solutions | Stage | Lib Server lobby Workflow                                 #
+      #######################################################################################
+      - name: "dbx_gcp_qa_stage_lib_server_lobby_workflow"
+        job_clusters:
+          - job_cluster_key: "dbx-qa-cluster-gcp"
+            <<: *gcp-static-cluster
+        tasks:
+          - task_key: "stage_lib_server_lobby_spark_etl"
+            job_cluster_key: "dbx-qa-cluster-gcp"
+            python_wheel_task:
+              package_name: "spark_solutions"
+              entry_point: "stage_lib_server_lobby"
+          - task_key: "stage_lib_server_lobby_dlt_pipe"
+            job_cluster_key: "dbx-qa-cluster-gcp"
+            git_source:
+              git_url: https://github.com/rethinkr-hub/py-superhero-orchestration.git
+              git_provider: "GitHub"
+              git_branch: "master"
+            deployment_config:
+              no_package: true # we omit using package since code will be shipped directly from the Repo
+            depends_on:
+              - task_key: "stage_lib_server_lobby_spark_etl"
+            notebook_task:
+              notebook_path: "databricks/spark_solutions/notebooks/stage/lib_server_lobby.py"

@@ -1,27 +1,30 @@
-from spark_solutions.common.spark_config import config_spark_session
+from spark_solutions.common.spark_config import SparkConfig
+from spark_solutions.common.spark_misc import extract_tables
 
-import datetime
+import logging
 import os
 
+logger = logging.getLogger(f'py4j.{__name__}')
+
 # ENV Variables
-CLOUD_PROVIDER = os.getenv('CLOUD_PROVIDER', 'LOCAL')
-INPUT_DIR = os.getenv('INPUT_DIR', 's3://datasim-superhero-dataflow-standard/standard/etl_meta')
-OUTPUT_DIR = os.getenv('OUTPUT_DIR', 's3://datasim-superhero-dataflow-stage/stage/etl_meta')
+CLOUD_PROVIDER=os.getenv('CLOUD_PROVIDER', 'LOCAL')
+INPUT_DIR = os.getenv('STANDARD_DIR')
+OUTPUT_DIR = os.getenv('STAGE_DIR')
 
-def _extract_tables(sc, d0=datetime.date.today(), d1=datetime.date.today() - datetime.timedelta(1)):
-    delta_paths = [
-        f'{INPUT_DIR}/standard/etl_meta/{d0.year}/{d0.month:02d}/{d0.day:02d}',
-        f'{INPUT_DIR}/standard/etl_meta/{d1.year}/{d1.month:02d}/{d1.day:02d}',
-    ]
-
-    if CLOUD_PROVIDER != 'LOCAL':
-        data = sc.read.parquet(*delta_paths)
-    else:
-        data = sc.read.parquet(*[d for d in delta_paths if os.path.isdir(d)])
-
-    data.createOrReplaceTempView('etl_meta')
+assert(not INPUT_DIR is None and INPUT_DIR != '')
+assert(not OUTPUT_DIR is None and OUTPUT_DIR != '')
 
 def _transform(sc):
+    """
+    Transforms data to stage the ETL Meta table.
+
+    This function performs the transformation stage of the ETL pipeline by staging the ETL Meta table.
+    It calculates aggregates and extracts partition information from the input data.
+
+    Parameters:
+    - sc (SparkContext): The SparkContext object.
+    """
+    logger.info(f'ETL Pipeline | Transform | Staging ETL Meta Table')
     rs = sc.sql("""
         WITH unnamed_partitions AS (
             SELECT date_array[0] year, date_array[1] month, date_array[2] day, *
@@ -40,18 +43,41 @@ def _transform(sc):
     """)
 
     rs.createOrReplaceTempView('stage__etl_meta')
-    
-def _load(sc):
+
+def _load(sc, blob_prefix='standard' if CLOUD_PROVIDER!='AZURE' else ''):
+    """
+    Loads ETL Meta logs to Delta tables in the specified output directory based on the cloud provider.
+
+    This function performs the load stage of the ETL pipeline by loading ETL Meta logs into Delta tables
+    located in the specified output directory. The loading process varies based on the cloud provider.
+
+    Parameters:
+    - sc (SparkContext): The SparkContext object.
+    - blob_prefix (str): The prefix to be appended to the output directory paths (default: 'standard' if CLOUD_PROVIDER is not 'AZURE', else '').
+    """
+    logger.info(f'ETL Pipeline | Load | Loading ETL Meta Logs to Delta Tables in {CLOUD_PROVIDER}')
     df = sc.table('stage__etl_meta')
     df.write \
-        .format('parquet') \
+        .format('delta') \
         .partitionBy('year', 'month', 'day') \
         .mode('overwrite') \
-        .save(f'{OUTPUT_DIR}/stage/etl_meta')
+        .save(os.path.join(OUTPUT_DIR, blob_prefix, 'etl_meta'))
 
-def entrypoint():
-    sc = config_spark_session('stage_etl.meta')
-    _extract_tables(sc)
+def entrypoint(blob_prefix='standard' if CLOUD_PROVIDER!='AZURE' else ''):
+    """
+    Entry point for the ETL pipeline to process ETL Meta logs.
+
+    This function serves as the entry point for the ETL (Extract, Transform, Load) pipeline
+    to process ETL Meta logs. It initializes a SparkContext using the configured SparkConfig,
+    performs extraction, transformation, and loading stages, and manages the overall execution flow.
+
+    Parameters:
+    - blob_prefix (str): The prefix to be appended to the input directory paths (default: 'standard' if CLOUD_PROVIDER is not 'AZURE', else '').
+    """
+    sc = SparkConfig(app_name='stage_etl.meta') \
+        .get_sparkContext()
+
+    extract_tables(sc, os.path.join(INPUT_DIR, blob_prefix, 'etl_meta'))
     _transform(sc)
     _load(sc)
 
